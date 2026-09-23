@@ -1,0 +1,86 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Virtual environments
+venv/
+env/
+ENV/
+.venv/
+
+# IDE / editor
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+*.code-workspace
+
+# Logs
+logs/
+.logs/
+*.log
+
+# Runtime / generated output (keep directory placeholders)
+results/*
+!results/.gitkeep
+uploads/*
+!uploads/.gitkeep
+!uploads/avatars/
+uploads/avatars/*
+!uploads/avatars/.gitkeep
+test_dynamics/*
+!test_dynamics/.gitkeep
+
+# OS
+.DS_Store
+Thumbs.db
+Desktop.ini
+
+# Environment / secrets
+.env
+.env.local
+.env.*.local
+!.env.example
+deploy/dozzle/*
+!deploy/dozzle/.gitkeep
+
+# Node / frontend build
+node_modules/
+frontend/dist/
+frontend/dist-ssr/
+*.local
+
+# Generated images / graphs
+workflow_graph.png
+*_response_langraph.png
+
+# Coverage / test caches
+.coverage
+htmlcov/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.tox/
+.cache/
+
+# Jupyter
+.ipynb_checkpoints/
+/artifacts/

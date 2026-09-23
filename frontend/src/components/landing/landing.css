@@ -1,0 +1,211 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap');
+
+.landing-root {
+  --brand-primary: #22d3ee;
+  --brand-secondary: #2563eb;
+  font-family: Inter, Arial, sans-serif;
+}
+
+.landing-brand-gradient {
+  background: linear-gradient(to right, var(--brand-primary), var(--brand-secondary));
+}
+
+.landing-brand-text {
+  color: var(--brand-primary);
+}
+
+.landing-brand-text-secondary {
+  color: var(--brand-secondary);
+}
+
+@keyframes cart-control {
+  0% { transform: translateX(-42px); }
+  12% { transform: translateX(28px); }
+  25% { transform: translateX(48px); }
+  38% { transform: translateX(10px); }
+  50% { transform: translateX(-36px); }
+  62% { transform: translateX(-52px); }
+  75% { transform: translateX(-18px); }
+  88% { transform: translateX(36px); }
+  100% { transform: translateX(-42px); }
+}
+
+@keyframes pendulum-balance {
+  0% { transform: rotate(-5.5deg); }
+  10% { transform: rotate(3.5deg); }
+  22% { transform: rotate(6.5deg); }
+  34% { transform: rotate(-2deg); }
+  46% { transform: rotate(-6deg); }
+  58% { transform: rotate(2.5deg); }
+  70% { transform: rotate(5deg); }
+  82% { transform: rotate(-3.5deg); }
+  100% { transform: rotate(-5.5deg); }
+}
+
+@keyframes wheel-spin-left {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(-360deg); }
+}
+
+@keyframes wheel-spin-right {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
+@keyframes glow-pulse {
+  0%, 100% { opacity: 0.12; transform: scale(0.85); }
+  50% { opacity: 0.38; transform: scale(1.25); }
+}
+
+@keyframes signal-flow {
+  0% { stroke-dashoffset: 120; opacity: 0.15; }
+  50% { opacity: 0.85; }
+  100% { stroke-dashoffset: 0; opacity: 0.15; }
+}
+
+@keyframes grid-drift {
+  0% { background-position: 0 0; }
+  100% { background-position: 160px 160px; }
+}
+
+@keyframes telemetry-pulse {
+  0%, 100% { opacity: 0.15; transform: scale(0.8); }
+  50% { opacity: 0.9; transform: scale(1.25); }
+}
+
+@keyframes controller-bars {
+  0%, 100% { transform: scaleY(0.35); opacity: 0.35; }
+  25% { transform: scaleY(0.95); opacity: 0.85; }
+  50% { transform: scaleY(0.55); opacity: 0.55; }
+  75% { transform: scaleY(1.2); opacity: 1; }
+}
+
+@keyframes base-glow {
+  0%, 100% { opacity: 0.18; }
+  50% { opacity: 0.65; }
+}
+
+.landing-root .control-cart {
+  animation: cart-control 4.8s cubic-bezier(0.65, 0, 0.35, 1) infinite;
+  transform-box: fill-box;
+  transform-origin: center;
+  will-change: transform;
+}
+
+.landing-root .control-pendulum {
+  animation: pendulum-balance 1.65s cubic-bezier(0.45, 0, 0.55, 1) infinite;
+  transform-box: view-box;
+  transform-origin: 400px 300px;
+  will-change: transform;
+}
+
+.landing-root .control-wheel-left {
+  animation: wheel-spin-left 1.1s linear infinite;
+  transform-box: fill-box;
+  transform-origin: center;
+}
+
+.landing-root .control-wheel-right {
+  animation: wheel-spin-right 1.1s linear infinite;
+  transform-box: fill-box;
+  transform-origin: center;
+}
+
+.landing-root .control-glow {
+  animation: glow-pulse 1.6s ease-in-out infinite;
+  transform-box: fill-box;
+  transform-origin: center;
+}
+
+.landing-root .control-signal {
+  stroke-dasharray: 14 14;
+  animation: signal-flow 1.25s linear infinite;
+}
+
+.landing-root .control-grid {
+  animation: grid-drift 16s linear infinite;
+}
+
+.landing-root .telemetry-dot {
+  animation: telemetry-pulse 1.4s ease-in-out infinite;
+  transform-box: fill-box;
+  transform-origin: center;
+}
+
+.landing-root .telemetry-dot:nth-of-type(2) { animation-delay: 0.25s; }
+.landing-root .telemetry-dot:nth-of-type(3) { animation-delay: 0.5s; }
+
+.landing-root .controller-bar {
+  animation: controller-bars 1.2s ease-in-out infinite;
+  transform-box: fill-box;
+  transform-origin: bottom;
+}
+
+.landing-root .controller-bar:nth-child(2) { animation-delay: 0.15s; }
+.landing-root .controller-bar:nth-child(3) { animation-delay: 0.3s; }
+.landing-root .controller-bar:nth-child(4) { animation-delay: 0.45s; }
+
+.landing-root .base-active-glow {
+  animation: base-glow 1.4s ease-in-out infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .landing-root .control-cart,
+  .landing-root .control-pendulum,
+  .landing-root .control-wheel-left,
+  .landing-root .control-wheel-right,
+  .landing-root .control-glow,
+  .landing-root .control-signal,
+  .landing-root .control-grid,
+  .landing-root .telemetry-dot,
+  .landing-root .controller-bar,
+  .landing-root .base-active-glow {
+    animation: none !important;
+  }
+}
+
+.landing-markdown h1,
+.landing-markdown h2,
+.landing-markdown h3 {
+  color: var(--app-foreground, #1a1a2e);
+  font-weight: 700;
+  margin-top: 1.5rem;
+  margin-bottom: 0.75rem;
+}
+
+.landing-markdown p {
+  color: var(--app-foreground-secondary, #334155);
+  line-height: 1.75;
+  margin-bottom: 1rem;
+}
+
+.landing-markdown a {
+  color: var(--app-primary, #5b7fff);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.landing-markdown code {
+  background: var(--app-surface-muted, #f8fafc);
+  color: var(--app-foreground, #1a1a2e);
+  border: 1px solid var(--app-border, #dde3ef);
+  padding: 0.15rem 0.35rem;
+  border-radius: 0.25rem;
+  font-size: 0.88em;
+}
+
+.landing-markdown pre {
+  background: var(--app-code-bg, #0f172a);
+  color: var(--app-code-text, #e2e8f0);
+  border: 1px solid var(--app-border, #dde3ef);
+  padding: 1rem;
+  border-radius: 0.75rem;
+  overflow-x: auto;
+}
+
+.landing-markdown pre code {
+  background: transparent;
+  color: inherit;
+  border: none;
+  padding: 0;
+}
