@@ -1,10 +1,9 @@
-# Minimal AgentPlant API + agent runtime
--e ./packages/labcd_agents[all]
-fastapi>=0.115
-uvicorn[standard]>=0.30
-pydantic>=2,<3
-python-dotenv>=1,<2
-httpx>=0.27
-# Core LLM stack (also pulled by labcd_agents[all])
-langchain-core>=0.3,<0.4
-PyYAML>=6,<7
+# AgentPlant (Streamlit) — minimal dependency set.
+streamlit>=1.38
+openai>=1.55
+numpy>=1.26
+scipy>=1.11
+plotly>=5.22
+pandas>=2.0
+PyYAML>=6.0
+python-dotenv>=1.0
