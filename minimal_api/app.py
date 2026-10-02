@@ -20,7 +20,7 @@ import sys
 import time
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Literal, Optional
+from typing import Any, List, Literal, Optional
 
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
@@ -60,6 +60,11 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# RAG / sandbox / probes (thread-pooled blocking work)
+from minimal_api.extras import router as extras_router  # noqa: E402
+app.include_router(extras_router)
+
+
 # ---------------------------------------------------------------------------
 # Schemas (match frontend / original plant_model schemas)
 # ---------------------------------------------------------------------------
@@ -91,12 +96,35 @@ class PlantModelChatRequest(BaseModel):
     min_user_turns_before_completion: int = Field(
         default=DEFAULT_MIN_USER_TURNS_BEFORE_COMPLETION, ge=1, le=5
     )
+    # Composer ◎ toggle — when true, run focus-gated OpenAI web_search
+    web_search_enabled: bool = False
 
 
 class TokenUsageOut(BaseModel):
     input_tokens: int
     output_tokens: int
     estimated_cost: float
+
+
+class StepOut(BaseModel):
+    kind: str
+    label: str
+    detail: Optional[str] = None
+    ok: bool = True
+
+
+class RagChunkOut(BaseModel):
+    file_name: str
+    text: str
+    score: Optional[float] = None
+
+
+class WebSearchOut(BaseModel):
+    status: Literal["empty", "ok", "skipped"] = "empty"
+    query: Optional[str] = None
+    brief: Optional[str] = None
+    link: Optional[str] = None
+    reason: Optional[str] = None
 
 
 class PlantModelChatResponse(BaseModel):
@@ -106,6 +134,14 @@ class PlantModelChatResponse(BaseModel):
     session_state: PlantModelSessionState
     usage: Optional[TokenUsageOut] = None
     conversation_id: Optional[int] = None
+    # Additive — mockup tool-trace / transparency (optional for older clients)
+    steps: List[StepOut] = Field(default_factory=list)
+    rag_chunks: List[RagChunkOut] = Field(default_factory=list)
+    web_search: Optional[WebSearchOut] = None
+    draft: Optional[PlantModelResult] = None  # latest draft even when status is continue
+
+
+PlantModelChatResponse.model_rebuild()
 
 
 class PlantModelConversationSummary(BaseModel):
@@ -234,14 +270,19 @@ def errors_config() -> dict[str, Any]:
 
 
 @app.post("/api/v1/plant-model/chat", response_model=PlantModelChatResponse)
-def plant_model_chat(request: PlantModelChatRequest) -> PlantModelChatResponse:
+async def plant_model_chat(request: PlantModelChatRequest) -> PlantModelChatResponse:
     user_message = (request.user_message or "").strip()
     if not user_message:
         raise HTTPException(status_code=422, detail="user_message is required")
 
+    # Frontend may send "auto" — resolve to a concrete OpenAI model.
+    model_name = (request.model or "").strip() or "gpt-4o-mini"
+    if model_name.lower() in {"auto", "default", ""}:
+        model_name = os.getenv("AGENTPLANT_DEFAULT_MODEL", "gpt-4o-mini")
+
     try:
         agent = PlantModelAgent(
-            model=request.model,
+            model=model_name,
             max_drafts=request.max_drafts,
             min_user_turns_before_completion=request.min_user_turns_before_completion,
         )
@@ -255,8 +296,152 @@ def plant_model_chat(request: PlantModelChatRequest) -> PlantModelChatResponse:
     prev_draft_count = agent._draft_count
 
     history = [{"role": m.role, "content": m.content} for m in request.messages]
+
+    # ---- RAG: retrieve from session attachments; inject into a *copy* of
+    # the user message (never rewrite stored history). ----
+    from minimal_api.extras import _attached_files, retrieve_attachment_context, run_blocking
+
+    steps_acc: list[StepOut] = []
+    rag_chunks_out: list[RagChunkOut] = []
+    retrieved_context = ""
+
+    if _attached_files:
+        file_label = _attached_files[-1]
+
+        try:
+            retrieved_context, raw_chunks = await run_blocking(
+                retrieve_attachment_context, user_message
+            )
+            for c in raw_chunks or []:
+                rag_chunks_out.append(
+                    RagChunkOut(
+                        file_name=getattr(c, "file_name", file_label),
+                        text=getattr(c, "text", "") or "",
+                        score=getattr(c, "score", None),
+                    )
+                )
+            detail = retrieved_context[:500] if retrieved_context else None
+            if rag_chunks_out:
+                detail = "\n".join(
+                    f"{c.file_name} (score={c.score}): {c.text[:160]}" for c in rag_chunks_out[:5]
+                )
+            ok = bool(retrieved_context) and "no text is available yet" not in (
+                retrieved_context or ""
+            )
+            steps_acc.append(
+                StepOut(
+                    kind="rag",
+                    label=f"Inspected {file_label}" if ok else f"Attach incomplete: {file_label}",
+                    detail=detail,
+                    ok=ok,
+                )
+            )
+        except Exception as rag_exc:
+            steps_acc.append(
+                StepOut(kind="rag", label="File search failed", detail=str(rag_exc), ok=False)
+            )
+            retrieved_context = (
+                f"Attached file(s): {', '.join(_attached_files)}. "
+                f"Retrieval failed ({rag_exc}). Ask the user for key excerpts."
+            )
+
+    # ---- Web search (composer ◎); focus-gated planner + OpenAI web_search ----
+    from minimal_api.extras import run_web_search
+
+    web_search_out = WebSearchOut(status="empty")
+    web_context = ""
+    if request.web_search_enabled:
+        try:
+            ws_result = await run_blocking(
+                run_web_search,
+                user_message=user_message,
+                history=history,
+                retrieved_context=retrieved_context,
+                model=model_name,
+            )
+            web_search_out = WebSearchOut(
+                status=ws_result.get("status") or "empty",  # type: ignore[arg-type]
+                query=ws_result.get("query"),
+                brief=ws_result.get("brief"),
+                link=ws_result.get("link"),
+                reason=ws_result.get("reason"),
+            )
+            queries = list(ws_result.get("queries") or [])
+            links = list(ws_result.get("links") or [])
+            if web_search_out.status == "ok" and web_search_out.brief:
+                web_context = web_search_out.brief
+                # One step per query for transparent research trail
+                for q in queries or [web_search_out.query or "web"]:
+                    steps_acc.append(
+                        StepOut(
+                            kind="web",
+                            label=f"Searched the web: {q}",
+                            detail=None,
+                            ok=True,
+                        )
+                    )
+                if links:
+                    src_lines = []
+                    for lk in links[:10]:
+                        title = (lk.get("title") or lk.get("url") or "").strip()
+                        url = (lk.get("url") or "").strip()
+                        src_lines.append(f"• {title}" + (f"\n  {url}" if url and url != title else ""))
+                    steps_acc.append(
+                        StepOut(
+                            kind="web",
+                            label=f"Sources ({len(links)})",
+                            detail="\n".join(src_lines),
+                            ok=True,
+                        )
+                    )
+                # Keep a short brief step for what was injected into the agent
+                steps_acc.append(
+                    StepOut(
+                        kind="web",
+                        label="Research brief",
+                        detail=(web_search_out.brief or "")[:600],
+                        ok=True,
+                    )
+                )
+            else:
+                steps_acc.append(
+                    StepOut(
+                        kind="web",
+                        label="Web search skipped",
+                        detail=web_search_out.reason or web_search_out.query,
+                        ok=True,
+                    )
+                )
+        except Exception as ws_exc:
+            web_search_out = WebSearchOut(status="skipped", reason=str(ws_exc))
+            steps_acc.append(
+                StepOut(kind="web", label="Web search failed", detail=str(ws_exc), ok=False)
+            )
+
+    # Augment only the message copy passed to the agent
+    agent_user_message = user_message
+    context_blocks: list[str] = []
+    if retrieved_context:
+        context_blocks.append(
+            "Attached-file context (use this; do not claim you cannot access attachments):\n"
+            f"{retrieved_context}"
+        )
+    if web_context:
+        context_blocks.append(
+            "Web search brief (use for specific real-world facts; cite if relevant):\n"
+            f"{web_context}"
+        )
+    if context_blocks:
+        agent_user_message = (
+            f"{user_message}\n\n---\n" + "\n\n---\n".join(context_blocks) + "\n---"
+        )
+
+    def _step():
+        return agent.step(history, agent_user_message)
+
     try:
-        reply, final_payload = agent.step(history, user_message)
+        from starlette.concurrency import run_in_threadpool
+        reply, final_payload = await run_in_threadpool(_step)
     except Exception as exc:
         raise HTTPException(status_code=502, detail=f"LLM / agent error: {exc}") from exc
 
@@ -318,6 +503,24 @@ def plant_model_chat(request: PlantModelChatRequest) -> PlantModelChatResponse:
                 entry["system_name"] = final_result.system_name
             entry["updated_at"] = _now()
 
+    # Latest draft for the code artifact panel (additive)
+    draft = final_result
+    if draft is None and session_state.latest_draft is not None:
+        draft = session_state.latest_draft
+
+    steps_acc.append(
+        StepOut(kind="agent", label=f"Agent status: {status}", detail=(reply or "")[:240], ok=True)
+    )
+    if draft is not None:
+        steps_acc.append(
+            StepOut(
+                kind="draft",
+                label=f"Draft ready: {draft.system_name}",
+                detail="python_code available in artifact panel",
+                ok=True,
+            )
+        )
+
     return PlantModelChatResponse(
         reply=reply,
         status=status,
@@ -325,6 +528,10 @@ def plant_model_chat(request: PlantModelChatRequest) -> PlantModelChatResponse:
         session_state=session_state,
         usage=usage,
         conversation_id=conv_id,
+        steps=steps_acc,
+        rag_chunks=rag_chunks_out,
+        web_search=web_search_out,
+        draft=draft,
     )
 
 

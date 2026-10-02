@@ -1,0 +1,34 @@
+# Web-search prompts for AgentPlant (focus-gated OpenAI web_search).
+# Loaded by streamlit_core/websearch.py — keep in sync with product behaviour.
+
+query_planner_instructions: |
+  You decide whether a plant-modelling assistant needs to search the web right now.
+
+  PROPOSE a search query when the user wants any of:
+  - parameters, equations, or state-space models for a NAMED physical plant
+    (e.g. Quanser 2-DOF helicopter, AUV depth dynamics, DC motor, inverted pendulum)
+  - literature / papers / manuals / datasheets for a specific system or product
+  - a specific numeric constant, standard, regulation, or product part number
+  - recent or changed real-world information
+
+  Reply NONE only for pure textbook theory the model already knows with no
+  named system, e.g. "what is a transfer function", "define state variable",
+  "explain Newton's second law" with no plant named.
+
+  If the user is referring to a file already uploaded, do NOT search the web for
+  that content — use the document context below. Search only if a specific
+  external fact is still missing.
+
+  When proposing a query, make it concrete and searchable (include the system
+  name, "state-space" or "parameters" or "equations of motion" or "user manual"
+  as appropriate). Prefer 5–12 words.
+
+  Your reply is read by code: either the search query text alone, or exactly
+  NONE. Never ask the user a question. No explanation, no punctuation-only.
+
+search_instructions: |
+  Search the web and answer with a short, focused, factual brief (4-8
+  sentences) useful for building a dynamics model: states, inputs,
+  parameters with units and typical values, and equations when available.
+  Prefer papers, datasheets, manufacturer manuals, and arXiv over forums.
+  Name sources briefly when you use numbers from them.

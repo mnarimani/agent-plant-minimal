@@ -1,6 +1,6 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
+import type { ComponentProps, CSSProperties, FC } from 'react'
 import EditorImport from 'react-simple-code-editor'
-import type { ComponentProps, FC } from 'react'
 import { highlight, languages } from 'prismjs'
 import { codePreview } from '../lib/classes'
 
@@ -25,7 +25,7 @@ if (!languages.python) {
               lookbehind: true,
             },
             'conversion-option': {
-              pattern: /![sra](?=[:}]$)/,
+              pattern: /![sra](?=[:]$)/,
               alias: 'punctuation',
             },
             rest: null,
@@ -85,6 +85,9 @@ interface CodePreviewProps {
   readOnly?: boolean
   height?: number
   language?: 'python' | 'matlab'
+  /** Show a narrow gutter of 1-based line numbers (default true). */
+  showLineNumbers?: boolean
+  className?: string
 }
 
 function highlightCode(code: string, language: 'python' | 'matlab') {
@@ -115,27 +118,57 @@ export function CodePreview({
   readOnly = false,
   height = 400,
   language = 'python',
+  showLineNumbers = true,
+  className = '',
 }: CodePreviewProps) {
   const isEditable = !readOnly && Boolean(onChange)
   const resolvedHeight = useResponsiveEditorHeight(height)
 
+  const lineNumbers = useMemo(() => {
+    const n = value ? value.split('\n').length : 1
+    return Array.from({ length: Math.max(n, 1) }, (_, i) => i + 1)
+  }, [value])
+
+  const gutterWidthCh = Math.max(2, String(lineNumbers.length).length)
+
+  const editorStyle: CSSProperties = {
+    padding: '12px 14px',
+    minHeight: '100%',
+  }
+
   return (
     <div
-      className={`code-editor ${codePreview} overflow-auto`}
+      className={`code-editor ${showLineNumbers ? 'code-editor--lined' : ''} ${codePreview} ${className}`.trim()}
       style={{ height: resolvedHeight, minHeight: Math.min(resolvedHeight, 180) }}
     >
-      <Editor
-        value={value}
-        onValueChange={(next) => onChange?.(next)}
-        highlight={(code) => highlightCode(code, language)}
-        disabled={!isEditable}
-        padding={0}
-        tabSize={4}
-        insertSpaces
-        className="code-editor__surface"
-        textareaClassName="code-editor__textarea"
-        preClassName="code-editor__pre"
-      />
+      {showLineNumbers && (
+        <div
+          className="code-editor__gutter"
+          aria-hidden="true"
+          style={{ ['--gutter-ch' as string]: gutterWidthCh } as CSSProperties}
+        >
+          {lineNumbers.map((n) => (
+            <span key={n} className="code-editor__lineno">
+              {n}
+            </span>
+          ))}
+        </div>
+      )}
+      <div className="code-editor__body overflow-auto">
+        <Editor
+          value={value}
+          onValueChange={(next) => onChange?.(next)}
+          highlight={(code) => highlightCode(code, language)}
+          disabled={!isEditable}
+          padding={0}
+          tabSize={4}
+          insertSpaces
+          className="code-editor__surface"
+          textareaClassName="code-editor__textarea"
+          preClassName="code-editor__pre"
+          style={editorStyle}
+        />
+      </div>
     </div>
   )
 }

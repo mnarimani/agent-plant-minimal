@@ -255,20 +255,53 @@
 
 .code-editor {
   resize: vertical;
+  position: relative;
+  display: flex;
+  align-items: stretch;
+  background: #1a1a1a;
+  border-radius: 0;
+  overflow: hidden;
+}
+
+.code-editor__gutter {
+  flex: 0 0 auto;
+  min-width: calc(var(--gutter-ch, 2) * 1ch + 1.25rem);
+  padding: 12px 0.55rem 12px 0.65rem;
+  text-align: right;
+  user-select: none;
+  pointer-events: none;
+  background: #141414;
+  border-right: 1px solid #252525;
+  font-family: var(--font-mono, ui-monospace, SFMono-Regular, Menlo, Consolas, monospace);
+  font-size: 0.78rem;
+  line-height: 1.55;
+  color: #4b5563;
+  font-variant-numeric: tabular-nums;
+}
+
+.code-editor__lineno {
+  display: block;
+}
+
+.code-editor__body {
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 0;
 }
 
 .code-editor__surface,
 .code-editor__textarea,
 .code-editor__pre {
-  font-family: var(--font-mono);
+  font-family: var(--font-mono, ui-monospace, SFMono-Regular, Menlo, Consolas, monospace);
   font-size: 0.85rem;
-  line-height: 1.5;
+  line-height: 1.55;
   tab-size: 4;
 }
 
 .code-editor__surface {
   min-height: 100%;
   outline: none;
+  background: transparent;
 }
 
 .code-editor__textarea,
@@ -277,7 +310,7 @@
 }
 
 .code-editor__textarea {
-  caret-color: var(--app-code-text);
+  caret-color: #e6edf3;
 }
 
 .code-editor .token.comment,

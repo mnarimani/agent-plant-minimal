@@ -59,6 +59,27 @@ export interface PlantModelTokenUsage {
   estimated_cost: number
 }
 
+export interface PlantModelStep {
+  kind: string
+  label: string
+  detail?: string | null
+  ok?: boolean
+}
+
+export interface PlantModelRagChunk {
+  file_name: string
+  text: string
+  score?: number | null
+}
+
+export interface PlantModelWebSearch {
+  status: 'empty' | 'ok' | 'skipped'
+  query?: string | null
+  brief?: string | null
+  link?: string | null
+  reason?: string | null
+}
+
 export interface PlantModelChatResponse {
   reply: string
   status: 'continue' | 'draft' | 'complete'
@@ -66,6 +87,47 @@ export interface PlantModelChatResponse {
   session_state: PlantModelSessionState
   usage: PlantModelTokenUsage | null
   conversation_id: number | null
+  /** Additive mockup fields */
+  steps?: PlantModelStep[]
+  rag_chunks?: PlantModelRagChunk[]
+  web_search?: PlantModelWebSearch | null
+  draft?: PlantModelResult | null
+}
+
+export interface SimulateRequest {
+  python_code: string
+  T?: number
+  dt?: number
+  input_kind?: string
+  input_channel?: number
+  amplitude?: number
+  t0?: number
+  x0?: number[] | null
+  state_names?: string[] | null
+}
+
+export interface SimulateResponse {
+  success: boolean
+  message: string
+  diverged?: boolean
+  solver_used?: string
+  attempts?: string[]
+  n_states?: number
+  n_inputs?: number
+  input_channel?: number
+  input_kind?: string
+  state_names?: string[] | null
+  t?: number[] | null
+  x?: number[][] | null
+  u?: number[][] | null
+  demo?: boolean
+}
+
+export interface UploadResponse {
+  file_name: string
+  attached_files: string[]
+  demo?: boolean
+  message?: string
 }
 
 export interface PlantModelConversationSummary {

@@ -1,24 +1,16 @@
-import { useEffect, useState } from 'react'
-import { ArrowRight } from 'lucide-react'
+import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { healthApi } from '../api/endpoints'
 import type { PlantModelResult, PreLaunchConfig } from '../api/types'
-import { PlantModelChat } from '../components/PlantModelChat'
+import { AgentPlantChat } from '../components/AgentPlantChat'
 import { PreLaunchModal } from '../components/PreLaunchModal'
 import { usePipeline } from '../context/PipelineContext'
-import { AUTO_MODEL } from '../lib/modelPicker'
 
 export function DesignPage() {
   const navigate = useNavigate()
   const pipeline = usePipeline()
-  const [models, setModels] = useState<string[]>(['gpt-4o', 'gpt-4o-mini'])
   const [activeResult, setActiveResult] = useState<PlantModelResult | null>(null)
   const [conversationId, setConversationId] = useState<number | null>(null)
   const [isPreLaunchOpen, setIsPreLaunchOpen] = useState(false)
-
-  useEffect(() => {
-    healthApi.models().then((res) => setModels(res.llm_models)).catch(() => {})
-  }, [])
 
   const handleUseModel = (result: PlantModelResult, convId?: number | null) => {
     setActiveResult(result)
@@ -37,16 +29,8 @@ export function DesignPage() {
   }
 
   return (
-    <div className="flex min-h-0 flex-1 flex-col">
-      <PlantModelChat
-        model={AUTO_MODEL}
-        models={models}
-        onModelChange={pipeline.setModel}
-        onUseModel={handleUseModel}
-        continueLabel="Configure & launch →"
-        continueIcon={<ArrowRight className="size-3.5" aria-hidden />}
-        isModalOpen={isPreLaunchOpen}
-      />
+    <div className="flex min-h-0 flex-1 flex-col h-full">
+      <AgentPlantChat model="gpt-4o-mini" onUseModel={handleUseModel} />
 
       {activeResult && (
         <PreLaunchModal
@@ -65,4 +49,3 @@ export function DesignPage() {
     </div>
   )
 }
-
