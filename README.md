@@ -1,194 +1,156 @@
-# AgentPlant — plant-model chat and Simulink conversion
+# AgentPlant — Simulink conversion
 
-AgentPlant is LabCD's plant-model assistant. A user describes a physical system — in words, equations,
-a document, or a **Simulink model** — and gets a runnable, simulated Python model:
+The Streamlit app (`app.py`) converts a **Simulink model** into a runnable, validated Python model:
 
 ```python
 def dynamics(t, x, u):   # dx/dt
-def output(t, x, u):     # the outputs y   (converted Simulink models)
-def update(t, x, u):     # discrete memory (models with Unit Delay, Memory ...)
+def output(t, x, u):     # the outputs y
+def update(t, x, u):     # discrete memory (only models with Unit Delay, Memory ...)
 ```
 
-plus metadata (states, inputs, outputs, parameters, equations).
-
-This repository started as a minimal extraction of the AgentPlant / PlantModelChat subsystem of
-[LabCD_Application](https://github.com/labcd-dev/LabCD_Application). Release v1 (branch
-`release/v1-simulink`) adds the Streamlit app with Simulink conversion; see [What changed](#what-changed-since-the-extraction).
+plus its metadata (states, inputs, outputs, equations). The model is attached in the chat; the
+converted model is simulated and can be changed in the chat like any other draft.
 
 ---
 
-## The three parts
-
-| Part | Start with | Uses | What it does |
-|------|-----------|------|--------------|
-| **Streamlit app** | `streamlit run app.py` | `backend_core/` (agent, rag, sandbox, websearch, prompts, **simulink**) | Chat agent, documents (RAG), web search, simulation lab, **Simulink conversion**. The most complete part. |
-| **Minimal API** | `python run_api.py` | `minimal_api/` → `backend_core/AgentPlant/` (chat), `streamlit_core/` (upload, simulate, web search) | FastAPI without DB or real auth, for the React UI. |
-| **React frontend** | `cd frontend && npm run dev` | the API above (Vite proxies `/api` → `http://localhost:8000`) | The "AgentPlant AI" chat on the Design page (`AgentPlantChat.tsx`). |
-
-> **For the website:** the Simulink conversion lives only in the Streamlit app. The API and the React
-> frontend do not call it yet — see [Wiring Simulink into the API](#wiring-simulink-into-the-api).
-
-`backend_api/` (PlantModelChat + HTTP routers / services) is the upstream LabCD code, kept as a
-reference; nothing in this repository imports it.
-
----
-
-## Quick start
-
-Python 3.10+ (tested with 3.11). From the repository root:
+## Run
 
 ```bash
 python -m venv .venv
 source .venv/bin/activate              # Windows: .\.venv\Scripts\Activate.ps1
-python -m pip install --upgrade pip
-pip install -r requirements.txt        # includes ./packages/labcd_agents[all]
+pip install -r requirements.txt
 cp .env.example .env                   # then set OPENAI_API_KEY
 streamlit run app.py
 ```
 
-On Windows, keep the repository in a short path (or enable long paths): some packages pulled by
-`labcd_agents[all]` have very long file names, and `pip install` fails deep in a folder tree.
+On Windows, keep the repository in a short path (or enable long paths), or `pip install` fails on
+packages with very long file names.
 
-Without `OPENAI_API_KEY` the app only shows how to set it. (The direct Simulink conversion itself
-calls no LLM; the tests run without a key.)
-
-### Environment variables
-
-| Variable | Default | Used by |
-|----------|---------|---------|
-| `OPENAI_API_KEY` | — | everything that calls an LLM |
-| `AGENTPLANT_MODEL` | `gpt-4.1` | the chat agent of the Streamlit app |
-| `AGENTPLANT_SIMULINK_MODEL` | `gpt-5.4-mini` | the LLM steps of the Simulink conversion |
-| `AGENTPLANT_LOG_DIR` | `.logs` | prompt / response logs (one `.jsonl` per day, git-ignored) |
-| `AGENTPLANT_DEFAULT_MODEL` | `gpt-4o-mini` | the minimal API's chat |
-| `AGENTPLANT_DEMO` | off | the minimal API: canned upload / simulation, no key needed |
-| `HOST`, `PORT`, `RELOAD` | `0.0.0.0`, `8000`, `1` | `run_api.py` |
+| Variable | Default | |
+|----------|---------|---|
+| `OPENAI_API_KEY` | — | required |
+| `AGENTPLANT_MODEL` | `gpt-4.1` | the chat agent |
+| `AGENTPLANT_SIMULINK_MODEL` | `gpt-5.4-mini` | the LLM steps of the conversion |
+| `AGENTPLANT_LOG_DIR` | `.logs` | prompt / response logs |
 
 ---
 
-## The Streamlit app
+## How it works
 
-A chat with the plant-model agent (`backend_core/agent.py`): one LLM call for the conversation and,
-after every draft, a second one for its metadata (states, equations ...), checked against the code.
-Attach files with 📎:
+### What can be uploaded
 
-- **PDF / Markdown** — indexed and searched on every turn (RAG).
-- **Simulink model** (`.slx`) and the MATLAB script (`.m`) of its parameters — converted (below).
-- **Generated C code** (`.c` / `.h` or a zip) or the zip of `c2py_export.m` — converted (below).
+| Upload | Route |
+|--------|-------|
+| `.slx` | **direct** (no MATLAB): converted right away |
+| `.m` script | the values of the model's MATLAB variables |
+| zip of `c2py_export.m` | **C code, route A** |
+| `<model>.c`, `<model>.h`, `<model>_data.c` (files or a zip) | **C code, route B** |
 
-Every draft is simulated in a restricted sandbox (`backend_core/sandbox.py`); the **Simulation Lab**
-runs it with your own inputs. Web search is optional (toggle in the sidebar).
+`backend_core/simulink/intake.py` classifies every upload, keeps what a conversion still waits for, and
+tells the chat agent what to say to the user (texts in `backend_core/prompts/simulink/upload_guidance.yaml`).
 
-### Simulink conversion
+### Direct route (`.slx`, no MATLAB, no LLM)
 
-| Upload | Route | Result |
-|--------|-------|--------|
-| `.slx` | **direct**: read from the model's XML — no MATLAB, no LLM | `dynamics`, `output` and, with discrete memory, `update`; checked against the engine's block model at 200 random points and in simulation |
-| `.slx` it cannot read (library blocks, Stateflow charts ...) | **C code**: the zip of `c2py_export.m` (route A), or `<model>.c`, `.h`, `_data.c` from Embedded Coder (route B) | C translated to Python, rewritten readable by an LLM, validated (route A also against Simulink's own results) |
+1. The `.slx` (a zip of XML) is read by the slx2py engine (`backend_core/simulink/direct/slx2py/`):
+   subsystems are flattened, Goto / From are resolved, block parameters are evaluated (MATLAB
+   expressions, with the values of the workspace variables).
+2. The engine builds a numeric **block model** of the whole model and extracts its equations.
+   Every block is converted, not only what reaches an Outport; sinks (Scope, Display ...) are left
+   out. A block that cannot be converted and reaches no output is left out with a note.
+3. `slx_direct.render_dynamics` writes `dynamics`, `output` and `update`.
+4. Checks against the block model: `dx/dt`, the update and the outputs y at 200 random points
+   (t, x, u), then both simulated with the model's solver (unit step on input 1).
+5. The app simulates the result with the model's own fixed-step solver and plots the outputs y.
 
-- **The whole model is converted** — every state, not only what reaches an Outport. Sinks (Scope,
-  Display ...) are left out; an unsupported block that reaches no output is left out with a note.
-- **Missing Inport / Outport:** the app shows the model's block diagram, and the user clicks the
-  signals that are the inputs u and the outputs y (several of each; ◆ marks an input port nothing is
-  connected to). Nothing is converted before that choice — or "Convert as it is".
-- **MATLAB workspace variables:** from the model's own callbacks (InitFcn ...), an attached `.m`
-  script, or the chat. `m = 2` is read by a parser; values in words ("m is two", «جرم دو کیلوگرم»)
-  by an LLM, whose numbers must appear in the message.
-- **Plots** show the outputs y (the states when a draft has no `output()`).
+Discrete blocks (Memory, Unit Delay, Zero-Order Hold, discrete integrators and filters, Rate Limiter,
+Relay, Backlash, Derivative) keep their memory as extra states with `dx/dt = 0`; `update(t, x, u)`
+gives their new values at every major step, as Simulink's Update phase does.
 
-Not supported by the direct route: blocks stored outside the `.slx` (toolbox libraries, referenced
-models, S-Functions), Stateflow charts, Simscape.
+### Missing values of MATLAB variables
 
-**Example models:** `examples/simulink_models/` — 19 models that convert directly, with a README.
+Block parameters often are MATLAB variables (`m`, `K`, `A` ...) whose values are not in the `.slx`.
+They are taken, in this order, from:
 
-### Code map
+1. the model's own callbacks (PreLoadFcn, PostLoadFcn, InitFcn) — run by a MATLAB interpreter
+   without MATLAB (`slx2py/model_converter/workspace.py`);
+2. an attached `.m` script;
+3. the chat: `m = 2` is read by a parser; values in words ("m is two", «جرم دو کیلوگرم») go to an LLM
+   (`direct/chat_values.py`), and a value is taken only if every number in it is in the message.
+
+While values are missing, the agent asks for exactly those; the model is converted as soon as they arrive.
+
+### Models without Inport / Outport
+
+When the model has no input u or no output y, the app does not convert it yet. It shows the model's
+block diagram (`direct/diagram.py`, every system and subsystem), and the user clicks the signals:
+
+- **input u** — the signal is replaced there by u (several inputs possible); ◆ marks an input port
+  nothing is connected to, which can be an input too;
+- **output y** — the signal is measured (several outputs possible);
+
+then "Convert with these signals", or "Convert as it is". The choice becomes new root Inports /
+Outports of the model (`topology.SignalChoice`) before it is converted.
+
+### C-code route
+
+For a model the direct route cannot read (blocks stored outside the `.slx`, Stateflow charts ...):
+
+- **Route A** — the user runs `c2py_export.m` in MATLAB (attached by the app). Its zip has the
+  generated C code and Simulink's own results for test inputs.
+- **Route B** — the user generates the code with Embedded Coder and sends `<model>.c`, `.h`, `_data.c`.
+
+`c2py/convert.py`: the C code is translated to Python (`c2py.py`), reduced to the exact
+`dynamics(t, x, u)` (`flatten.py`), rewritten readable by an LLM (`agent.py`) and checked against the
+exact translation; route A also against Simulink's results (`validation.py`).
+
+### Prompts
+
+Every LLM prompt of the app is in `backend_core/prompts/*.yaml` (chat agent, search, Simulink);
+`backend_core/prompts/README.md` lists which file and key is used where.
+
+---
+
+## Code map
 
 ```
-app.py                       # the Streamlit app (UI, turns, the signal picker panel)
+app.py                       # upload handling, conversions, the signal picker panel, plots
 backend_core/
-├── agent.py                 # PlantModelAgent: conversation + metadata calls
-├── sandbox.py               # restricted exec of drafted code, simulation, plots
-├── rag.py, websearch.py     # document search, web search
-├── openai_client.py, logging_utils.py, json_extract.py, steps.py
-├── prompts/                 # every LLM prompt, as YAML — prompts/README.md maps file / key -> use
+├── sandbox.py               # restricted exec of the code; output() / update() support
+├── prompts/                 # every LLM prompt, as YAML
 └── simulink/
-    ├── intake.py            # what was uploaded, what is missing, the notes for the agent
+    ├── intake.py            # uploads, what is missing, notes for the agent
     ├── llm.py               # the LLM of the conversion
-    ├── direct/              # route 1: .slx -> equations
+    ├── direct/
     │   ├── slx_direct.py        # convert_slx(): conversion + checks -> DirectResult
     │   ├── diagram.py           # the block diagram and the signal choice
-    │   ├── chat_values.py       # values of missing variables from a chat message
-    │   └── slx2py/              # the vendored SLX_TO_Python engine (topology, blocks, equations)
-    └── c2py/                # route 2: generated C code -> Python
+    │   ├── chat_values.py       # values of missing variables from a message
+    │   └── slx2py/              # the slx2py engine (topology, blocks, equations, workspace)
+    └── c2py/
         ├── convert.py           # convert_package() / convert_c_code(), simulate()
         ├── c2py.py, flatten.py, agent.py, equations.py, validation.py, package.py, cost.py
-        └── c2py_export.m        # the MATLAB script the user runs (attached by the app)
+        └── c2py_export.m        # the MATLAB script of route A
 ```
-
-### Wiring Simulink into the API
-
-Plain Python functions, no Streamlit inside:
 
 | Function | Does |
 |----------|------|
-| `simulink.intake.classify(name, data)` | what an uploaded file is (model, script, C code, package ...) |
-| `simulink.direct.slx_direct.convert_slx(file_name, data, runs_dir, scripts=, signals=)` | the direct conversion -> `DirectResult` (`ok`, `draft`, `reason`, `missing_variables`, `no_input` ...) |
-| `simulink.direct.diagram.read_diagram(data)`, `figure(...)`, `choice(diagram, inputs, outputs)` | the block diagram, as data and as a plotly figure; the user's choice -> `signals=` |
-| `simulink.direct.chat_values.read_values(text, missing, uses, llm)` | values of missing variables from a message |
-| `simulink.c2py.convert.convert_package(...)`, `convert_c_code(...)`, `simulate(...)` | the C-code routes and the simulation of a converted model |
+| `intake.classify(name, data)` | what an uploaded file is |
+| `slx_direct.convert_slx(file_name, data, runs_dir, scripts=, signals=)` | the direct conversion -> `DirectResult` |
+| `diagram.read_diagram(data)`, `figure(...)`, `choice(diagram, inputs, outputs)` | the block diagram; the user's choice -> `signals=` |
+| `chat_values.read_values(text, missing, uses, llm)` | values of missing variables from a message |
+| `convert.convert_package(...)`, `convert_c_code(...)`, `simulate(...)` | the C-code routes; the simulation |
 
-How `app.py` strings them together: `run_direct_conversion`, `run_conversion`, `submit` and
-`render_signal_picker`. Files of every conversion go to `simulink_runs/` (git-ignored).
-
----
-
-## Minimal API and React frontend
-
-```bash
-python run_api.py                      # http://localhost:8000, docs at /docs
-cd frontend && npm install && npm run dev
-```
-
-| Endpoint | Behaviour |
-|----------|-----------|
-| `POST /api/v1/plant-model/chat` | one chat turn (`backend_core/AgentPlant`) |
-| `GET/DELETE /api/v1/plant-model/conversations[/{id}]` | in-memory conversations |
-| `POST /api/v1/plant-model/upload`, `GET .../attachments` | documents for RAG |
-| `POST /api/v1/plant-model/simulate` | simulate a drafted `dynamics()` |
-| `GET /api/v1/health`, `/models`, `/auth/me`, `/errors/config` | stubs (no DB, a fixed dev user) |
-
-```bash
-curl -s http://localhost:8000/api/v1/health
-curl -s -X POST http://localhost:8000/api/v1/plant-model/chat -H "Content-Type: application/json" \
-  -d '{"messages":[],"user_message":"Design a simple DC motor position plant","model":"gpt-4o-mini"}'
-```
-
-`AGENTPLANT_README.md` has more on the React chat and the API (demo mode, the event loop). The core
-agent also runs as a CLI: `python backend_core/AgentPlant/run_cli.py` (see its `GUIDE.md`).
+Files of every conversion go to `simulink_runs/` (git-ignored).
 
 ---
 
-## Tests
+## Example models and tests
+
+`examples/simulink_models/` has 19 models that convert directly, with a README of what each shows.
 
 ```bash
-pip install pytest                     # for the tests only
+pip install pytest
 python -m pytest tests -q --ignore=tests/test_event_loop_nonblocking.py
 ```
 
-About 5 minutes; no MATLAB and no API key needed. The Simulink results the block tests compare with
-are stored in `tests/fixtures/*_reference.zip`; `tests/test_example_models.py` converts every example
-model. `test_event_loop_nonblocking.py` needs a running API (see its docstring).
-
----
-
-## What changed since the extraction
-
-Unchanged from the original extraction: `backend_core/AgentPlant/`, `backend_api/`, `minimal_api/`,
-`streamlit_core/`, `frontend/`, `packages/labcd_agents/`.
-
-New or changed in release v1:
-
-- `app.py` and `backend_core/` (agent, sandbox, rag, websearch ...): the Streamlit app.
-- `backend_core/simulink/`: the Simulink conversion (direct and C-code routes).
-- `backend_core/prompts/`: every prompt of the app as YAML.
-- `tests/`, `examples/simulink_models/`, `.env.example`, `requirements.txt` (+ streamlit).
+About 5 minutes; no MATLAB and no API key needed. The block tests compare with Simulink's results
+stored in `tests/fixtures/*_reference.zip`; `tests/test_example_models.py` converts every example model.
