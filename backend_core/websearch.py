@@ -21,42 +21,12 @@ from __future__ import annotations
 import re
 from typing import Any, Dict, List, Optional, Tuple
 
-from . import openai_client
+from . import openai_client, prompts
 
-_QUERY_PLANNER_INSTRUCTIONS = """\
-You decide whether a plant-modelling assistant needs to search the web right now.
+# the prompts: backend_core/prompts/search/websearch.yaml
+_QUERY_PLANNER_INSTRUCTIONS = prompts.text("search/websearch", "planner_instructions")
 
-Only propose a search when the user needs a SPECIFIC real-world fact the
-assistant would not already know confidently: a named component's datasheet
-parameter, a real standard or regulation, a specific numeric constant, a named
-product or material, or recent/changed information.
-
-Never propose a search for generic textbook concepts the assistant already
-knows, e.g. "state variable", "plant model", "differential equation",
-"Newton's second law", "transfer function", "what is a dynamics function".
-
-If the user is referring to a file or document already uploaded (e.g. "refer
-to the attached content", "use the PDF I gave you"), do NOT search the web for
-that — check the "document context already retrieved this turn" section below
-first. Only propose a web search if a specific fact is still missing after
-considering that context.
-
-Your reply is read by code, not a person: it is either the search query text
-itself, or exactly NONE. Never reply with a question, a request for the user
-to upload/provide/clarify something, or any other sentence addressed to the
-user — if you don't have enough to search on, or nothing further is needed,
-that is exactly what NONE means, not a reason to ask for more.
-
-Reply with ONLY the search query text (a few specific words — include part/
-model numbers or proper nouns when relevant), or reply with exactly NONE if
-no search is needed right now. No punctuation-only replies, no explanation.
-"""
-
-_SEARCH_INSTRUCTIONS = (
-    "Search the web and answer with a short, focused, factual brief (3-5 "
-    "sentences). Prefer authoritative sources such as datasheets, standards "
-    "bodies, and official documentation over forums or blogs."
-)
+_SEARCH_INSTRUCTIONS = prompts.text("search/websearch", "search_instructions")
 
 # Generic phrases that should never trigger a real web search on their own.
 _GENERIC_BLOCKLIST = {
@@ -145,22 +115,16 @@ def plan_query(
     nothing to work with, and it was empirically observed to reply with a
     request back to the user instead of a query or NONE.
     """
-    context_block = (
-        f"\n\nDocument context already retrieved this turn (from the user's "
-        f"uploaded file, if any):\n{retrieved_context.strip()}"
-        if retrieved_context.strip()
-        else ""
-    )
+    context_block = (prompts.fill(prompts.text("search/websearch", "retrieved_block"), context=retrieved_context.strip())
+                     if retrieved_context.strip() else "")
     resp = openai_client.responses_call(
         client,
         kind="web_query_plan",
         model=model or openai_client.DEFAULT_MODEL,
         instructions=_QUERY_PLANNER_INSTRUCTIONS,
-        input_text=(
-            f"Conversation so far:\n{history_text or '(no previous turns)'}\n\n"
-            f"Latest user message:\n{user_message}"
-            f"{context_block}"
-        ),
+        input_text=prompts.fill(prompts.text("search/websearch", "planner_input"),
+                                history=history_text or prompts.text("search/websearch", "no_history"),
+                                message=user_message, retrieved=context_block),
         temperature=0.0,
     )
     text = (resp.output_text or "").strip()

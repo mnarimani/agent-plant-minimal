@@ -379,6 +379,76 @@ This tree is intentionally incomplete as a full application. To exercise the com
 
 ---
 
+## Streamlit app and Simulink conversion
+
+`app.py` is a Streamlit app around the same plant-model agent (`backend_core/agent.py`). Besides the
+chat it converts **Simulink models** into a validated `dynamics(t, x, u)`:
+
+```bash
+pip install -r requirements.txt
+cp .env.example .env               # then set OPENAI_API_KEY
+streamlit run app.py
+```
+
+On Windows, keep the repo in a short path (or enable long paths): some packages pulled by
+`labcd_agents[all]` have very long file names, and `pip install` fails deep in a folder tree.
+
+> **Note for the website:** the Simulink features live only in the Streamlit app. `minimal_api/` and
+> `frontend/` do not call them yet. The entry points to wire into the API are listed below.
+
+### What it does
+
+| Upload | Route | Result |
+|--------|-------|--------|
+| `.slx` | **direct**: read from the model's XML, no MATLAB, no LLM | `dynamics(t, x, u)`, `output(t, x, u)` (the outputs y) and, with discrete memory, `update(t, x, u)`, checked against the engine's block model at 200 random points and in simulation |
+| `.slx` it cannot read (library blocks, Stateflow charts ...) | **C code**: the zip of `c2py_export.m`, or `<model>.c`, `.h`, `_data.c` from Embedded Coder | C translated to Python, rewritten readable by an LLM, validated |
+
+- **The whole model is converted**: every state, not only what reaches an Outport. Sinks (Scope, Display ...) are left out. An unsupported block that reaches no output is left out with a note.
+- **No Inport / Outport in the model**: the app shows the model's block diagram (`diagram.py`), and the user clicks the signals that are the inputs u and the outputs y. Nothing is converted before that choice. Unconnected input ports (◆) can be chosen as inputs too.
+- **MATLAB workspace variables**: values come from the model's callbacks (InitFcn ...), an attached `.m` script or the chat. In the chat, `m = 2` is read by a parser. Values in words ("m is two", «جرم دو کیلوگرم») go to an LLM, and its answer is checked: every number must be in the message.
+- **Plots** show the outputs y; the states when a draft has no `output()`.
+
+**Example models** to try: `examples/simulink_models/` (19 models that convert directly, with a README
+of what each shows).
+
+### Layout
+
+```
+backend_core/
+├── agent.py, sandbox.py, rag.py, websearch.py, openai_client.py   # chat agent, restricted exec + simulation
+├── prompts/              # every LLM prompt, as YAML (see prompts/README.md)
+└── simulink/
+    ├── intake.py         # what was uploaded, what is missing, the notes for the agent
+    ├── llm.py            # the LLM of the conversion (AGENTPLANT_SIMULINK_MODEL)
+    ├── direct/           # route 1: .slx -> equations
+    │   ├── slx_direct.py     # convert_slx(): conversion + checks -> DirectResult
+    │   ├── diagram.py        # read_diagram(), figure(), choice(): the signal picker
+    │   ├── chat_values.py    # values of missing variables from a chat message
+    │   └── slx2py/           # the vendored SLX_TO_Python engine (topology, blocks, dynamics ...)
+    └── c2py/             # route 2: generated C code -> Python
+        ├── convert.py        # convert_package() / convert_c_code(), simulate()
+        ├── c2py.py, flatten.py, agent.py, equations.py, validation.py, package.py, cost.py
+        └── c2py_export.m     # the MATLAB script the user runs (served by the app)
+```
+
+Entry points for an API: `slx_direct.convert_slx(file_name, data, runs_dir, scripts=, signals=)`,
+`diagram.read_diagram(data)` + `diagram.choice(diagram, inputs, outputs)`,
+`chat_values.read_values(text, missing, uses, llm)`, `c2py.convert.convert_package(...)` /
+`convert_c_code(...)`, `intake.classify(name, data)`. Conversion files go to `simulink_runs/` (git-ignored).
+
+### Tests
+
+```bash
+pip install pytest                 # for the tests only
+python -m pytest tests -q --ignore=tests/test_event_loop_nonblocking.py
+```
+
+`tests/test_example_models.py` converts every example model (about 40 s).
+No MATLAB is needed: the Simulink results the block tests compare with are stored in
+`tests/fixtures/*_reference.zip`. `test_event_loop_nonblocking.py` needs a running API (see its docstring).
+
+---
+
 ## Design principles of this extraction
 
 1. **Zero functional changes** — every original file is byte-identical to upstream.

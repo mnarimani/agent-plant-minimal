@@ -22,14 +22,10 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, List, Optional, Tuple
 
-from . import openai_client
+from . import openai_client, prompts
 
-_GROUNDING_INSTRUCTIONS = (
-    "Answer the question using ONLY the attached file(s), retrieved via file "
-    "search. Be concise and factual (a few sentences). If the attached file(s) "
-    "don't contain anything relevant to the question, say plainly that nothing "
-    "relevant was found — do not answer from general knowledge instead."
-)
+# the instructions: backend_core/prompts/search/rag.yaml
+_GROUNDING_INSTRUCTIONS = prompts.text("search/rag", "grounding_instructions")
 
 
 @dataclass

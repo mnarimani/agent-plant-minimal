@@ -1,0 +1,20 @@
+# Notes the app adds to a turn of the chat agent (backend_core/agent.py, app.py).
+#
+#   repair_note        appended to the system prompt after a reply that was not valid JSON
+#   force_draft_note   appended when the agent tried to finish the conversation too early
+#   unusable_file      a file the app cannot use was attached
+#   converted_draft    the current draft came from a Simulink conversion ({{state}} <- state_unchanged /
+#                      state_changed)
+
+repair_note: |2-
+
+
+  Internal note: your previous reply was not a single valid JSON object in one of the three allowed shapes. Reply again with ONLY one JSON object — status "draft" if the plant is already known from the history, otherwise "continue".
+force_draft_note: |2-
+
+
+  Internal note: do not emit status "complete" yet — the conversation is not finished. If the plant is already known, emit status "draft" with real python_code and ask what to change or whether to finish. Otherwise emit status "continue" with one concrete question. Output ONLY JSON.
+unusable_file: 'The attached file {{file}} cannot be used ({{why}}). Files the app accepts: {{accepted}}.'
+converted_draft: The current draft was converted by the application from the Simulink model {{model}} ({{source}}) and validated against {{verified_against}}. {{state}} Any change you make means it is no longer verified. Its code may also define output(t, x, u), the outputs y the plots show; keep it, and keep it consistent with dynamics, when you change the draft.
+state_unchanged: It is unchanged since.
+state_changed: It was changed in the chat since, so it is no longer verified against it.

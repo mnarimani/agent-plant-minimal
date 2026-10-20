@@ -104,6 +104,23 @@ def validate_ast(source: str) -> ast.Module:
 
 def compile_dynamics(source: str) -> Callable[[float, np.ndarray, Any], Any]:
     """Validate, compile, and execute ``source``; return the ``dynamics`` callable."""
+    return _compile(source)[0]
+
+
+def compile_update(source: str) -> Optional[Callable[[float, np.ndarray, Any], Any]]:
+    """The optional ``update(t, x, u)`` of a draft with discrete memory (a converted Simulink model
+    with Memory / Unit Delay / ... blocks): the new state vector at every major step of a
+    fixed-step solver, before its stages. None when the draft has none."""
+    return _compile(source)[1]
+
+
+def compile_output(source: str) -> Optional[Callable[[float, np.ndarray, Any], Any]]:
+    """The optional ``output(t, x, u)`` of a draft: its outputs y (a converted Simulink model: its
+    root Outports and the signals chosen as outputs). None when the draft has none."""
+    return _compile(source)[2]
+
+
+def _compile(source: str):
     tree = validate_ast(source)
     code = compile(tree, filename="<dynamics>", mode="exec")
 
@@ -120,9 +137,11 @@ def compile_dynamics(source: str) -> Callable[[float, np.ndarray, Any], Any]:
     except Exception:
         pass
 
-    local_ns: Dict[str, Any] = {}
+    # one namespace: helper functions defined at the top of the draft (e.g. _divide of a converted
+    # model) must be visible to dynamics() / update() as globals
+    local_ns = sandbox_globals
     try:
-        exec(code, sandbox_globals, local_ns)  # noqa: S102 - intentional, restricted namespace
+        exec(code, sandbox_globals)  # noqa: S102 - intentional, restricted namespace
     except Exception as exc:
         raise DynamicsCodeError(f"Drafted code raised an error while loading: {exc}") from exc
 
@@ -135,7 +154,14 @@ def compile_dynamics(source: str) -> Callable[[float, np.ndarray, Any], Any]:
         raise DynamicsCodeError(
             f"dynamics() must have signature (t, x, u); found ({', '.join(params)})."
         )
-    return fn
+    found = []
+    for name in ("update", "output"):
+        other = local_ns.get(name) or sandbox_globals.get(name)
+        if other is not None and (not callable(other)
+                                  or list(inspect.signature(other).parameters)[:3] != ["t", "x", "u"]):
+            raise DynamicsCodeError(f"{name}() must be a function with signature (t, x, u).")
+        found.append(other)
+    return fn, found[0], found[1]
 
 
 def infer_dims(source: str) -> Tuple[int, int, bool]:
@@ -197,6 +223,8 @@ class SimResult:
     t: Optional[np.ndarray] = None
     x: Optional[np.ndarray] = None  # shape (T, n_states)
     u: Optional[np.ndarray] = None  # shape (T, n_inputs)
+    y: Optional[np.ndarray] = None  # shape (T, n_outputs): output(t, x, u) of the draft, when it has one
+    output_names: Optional[List[str]] = None
     n_states: int = 0
     n_inputs: int = 0
     input_channel: int = 0
@@ -243,7 +271,34 @@ def _run_solve_ivp(rhs, t_final: float, x0_arr: np.ndarray, dt: float, method: s
         )
 
 
-def simulate(
+def simulate(python_code: str, **options) -> "SimResult":
+    """Simulate a draft (see ``_simulate``). A draft with ``output(t, x, u)`` also gets its outputs y,
+    which the plots then show instead of the states."""
+    return with_outputs(_simulate(python_code, **options), python_code)
+
+
+def with_outputs(result: "SimResult", python_code: str) -> "SimResult":
+    """``result`` with the draft's outputs y at every time step, when it has ``output(t, x, u)``"""
+    if not result.success or result.x is None or result.y is not None:
+        return result
+    try:
+        output = compile_output(python_code)
+        if output is None:
+            return result
+        scalar_u = infer_dims(python_code)[2]
+        rows = []
+        with np.errstate(all="ignore"):
+            for k, t in enumerate(result.t):
+                u = np.atleast_1d(np.asarray(result.u[k], dtype=float)) if result.u is not None else np.zeros(1)
+                rows.append(np.atleast_1d(np.asarray(output(float(t), np.array(result.x[k]), u[0] if scalar_u else u.copy()),
+                                                     dtype=float)))
+        result.y = np.array(rows)
+    except Exception as exc:  # noqa: BLE001 - the states are still shown
+        result.message += f" The outputs y could not be computed ({type(exc).__name__}: {exc}), so the states are shown."
+    return result
+
+
+def _simulate(
     python_code: str,
     *,
     x0: List[float],
@@ -350,6 +405,12 @@ def simulate(
                 attempts=attempts,
             )
 
+        update = compile_update(python_code)
+        if update is not None:
+            return _simulate_discrete(rhs, update, u_of_t, scalar_u, x0_arr, t_final, dt, attempts,
+                                      n_states=n_states, n_inputs=n_inputs, input_channel=input_channel,
+                                      input_kind=input_kind, state_names=state_names)
+
         sol = _run_solve_ivp(rhs, t_final, x0_arr, dt, "RK45")
         attempts.append("RK45" + (" (stopped early, state diverged)" if sol.status == 1 else ""))
         if sol.success:
@@ -379,6 +440,46 @@ def simulate(
         return SimResult(False, f"{exc}\n{tail}", attempts=attempts)
 
 
+def _simulate_discrete(rhs, update, u_of_t, scalar_u, x0, t_final, dt, attempts, **info) -> SimResult:
+    """A draft with discrete memory (``update``): fixed-step RK4 with step dt; every major step
+    first applies update(t, x, u) (Simulink's Update phase), then the four stages. The memory is
+    tied to the step, so the step is not adapted."""
+    n = int(round(t_final / dt))
+    t = np.arange(n + 1) * dt
+    x = np.asarray(x0, dtype=float).copy()
+    X = np.zeros((n + 1, x.size))
+    U = np.array([u_of_t(tt) for tt in t])
+    attempts.append("RK4 fixed-step with discrete update, dt = %g s" % dt)
+    end, diverged, message = n, False, "ok"
+
+    def apply(k, state):
+        u = U[k][0] if scalar_u else U[k]
+        new = np.atleast_1d(np.asarray(update(float(t[k]), state.copy(), u), dtype=float)).reshape(-1)
+        if new.shape != state.shape:
+            raise DynamicsCodeError(f"update() returned {new.size} value(s); the state vector has {state.size}.")
+        return new
+
+    with np.errstate(all="ignore"):
+        for k in range(n):
+            x = apply(k, x)
+            X[k] = x
+            k1 = rhs(t[k], x)
+            k2 = rhs(t[k] + dt / 2, x + dt / 2 * k1)
+            k3 = rhs(t[k] + dt / 2, x + dt / 2 * k2)
+            k4 = rhs(t[k] + dt, x + dt * k3)
+            x = x + dt / 6 * (k1 + 2 * k2 + 2 * k3 + k4)
+            if not np.all(np.isfinite(x)) or float(np.max(np.abs(x))) > _DIVERGENCE_THRESHOLD:
+                end, diverged = k + 1, True
+                X[k + 1] = x
+                message = (f"State magnitude exceeded {_DIVERGENCE_THRESHOLD:.0e} at t={t[k + 1]:.3g}s, so the "
+                           "simulation was stopped early.")
+                break
+        else:
+            X[n] = apply(n, x)
+    return SimResult(True, message, t=t[:end + 1], x=X[:end + 1], u=U[:end + 1], diverged=diverged,
+                     solver_used="RK4 (fixed step, discrete update)", attempts=attempts, **info)
+
+
 def run_default_simulation(python_code: str, state_names: Optional[List[str]] = None) -> SimResult:
     """The automatic smoke-test run shown right after a new draft/complete."""
     n_states, _n_inputs, _scalar_u = infer_dims(python_code)
@@ -400,14 +501,28 @@ def build_figure(sim: SimResult):
     from plotly.subplots import make_subplots
 
     names = sim.state_names or [f"x{i}" for i in range(sim.n_states)]
+    # a draft with output(t, x, u): its outputs y are what is shown, not the states
+    shown, title = sim.x, "States"
+    if sim.y is not None and sim.y.ndim == 2 and sim.y.shape[1] > 0:
+        shown, title = sim.y, "Outputs y"
+        names = sim.output_names or [f"y{i + 1}" for i in range(sim.y.shape[1])]
+    if sim.n_inputs == 0 and sim.u is not None:   # a model without input u (only its own sources)
+        fig = make_subplots(rows=1, cols=1, subplot_titles=(title,))
+        for i in range(shown.shape[1]):
+            label = names[i] if i < len(names) else f"x{i}"
+            fig.add_trace(go.Scatter(x=sim.t, y=shown[:, i], mode="lines", name=str(label)), row=1, col=1)
+        fig.update_xaxes(title_text="t (s)")
+        fig.update_layout(height=360, margin=dict(l=10, r=10, t=40, b=10),
+                          legend=dict(orientation="h", yanchor="bottom", y=1.06, x=0))
+        return fig
     fig = make_subplots(
         rows=2, cols=1, shared_xaxes=True, row_heights=[0.7, 0.3],
-        subplot_titles=("States", f"Input u[{sim.input_channel}] ({sim.input_kind})"),
+        subplot_titles=(title, f"Input u[{sim.input_channel}] ({sim.input_kind})"),
         vertical_spacing=0.1,
     )
-    for i in range(sim.x.shape[1]):
+    for i in range(shown.shape[1]):
         label = names[i] if i < len(names) else f"x{i}"
-        fig.add_trace(go.Scatter(x=sim.t, y=sim.x[:, i], mode="lines", name=str(label)), row=1, col=1)
+        fig.add_trace(go.Scatter(x=sim.t, y=shown[:, i], mode="lines", name=str(label)), row=1, col=1)
     fig.add_trace(
         go.Scatter(
             x=sim.t, y=sim.u[:, sim.input_channel], mode="lines",

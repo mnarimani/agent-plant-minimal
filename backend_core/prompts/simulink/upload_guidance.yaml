@@ -1,0 +1,139 @@
+# What the chat agent is told about a Simulink upload (backend_core/simulink/intake.py). The app
+# itself shows the user nothing of this: the agent says it, in the user's language. Every fact in
+# these texts (the reason a conversion failed, the missing files or values) is found by program.
+#
+#   export_steps / manual_steps    the steps of route A (c2py_export.m) and route B (the C files)
+#   context_*                      the state of the conversion, in the agent's prompt of every turn
+#                                  (fact_*, facts, found_in_file, code_* and routes are parts of it)
+#   just_uploaded_*                the turn in which the model arrives (the first reply)
+#   values_received_* / values_*   the user sent values of missing MATLAB variables
+#   script_kept                    a MATLAB script arrived and no model waits for it
+#   *_diagram, signals_*           a model without root Inports / Outports: the app shows its block
+#                                  diagram, where the user clicks the signals that are its inputs and
+#                                  outputs (backend_core/simulink/direct/diagram.py)
+
+export_steps: |-
+  1. Download c2py_export.m (attached to the reply).
+  2. Put it in the folder of the model, together with everything the model needs to run (scripts, data files, libraries). If variables must be defined first, put that script there as setup.m - it is run first.
+  3. In MATLAB, go to that folder and run {{call}}. It needs Simulink, Simulink Coder and Embedded Coder. The model file is not changed or saved.
+  4. Send the {{model}}_c2py.zip it creates here in the chat.
+  This zip also holds Simulink's own answers to test inputs, so the converted model is also checked against Simulink.
+export_call: c2py_export('{{model}}')
+export_call_unnamed: c2py_export
+unnamed_model: <model>
+manual_steps: |-
+  1. Open the model, then Model Settings (Ctrl+E).
+  2. Solver: type Fixed-step, solver ode8 (any of ode1-ode8 works), and a fixed step size.
+  3. Code Generation: system target file ert.tlc (Embedded Coder), language C, tick Generate code only.
+  4. Code Generation > Interface: Code interface packaging = Nonreusable function, tick Support: continuous time.
+  5. Build: Ctrl+B. This creates the folder {{model}}_ert_rtw.
+  6. Send these three files of that folder here in the chat - zipped or as files: {{model}}.c, {{model}}.h and {{model}}_data.c (the parameter values; a model without tunable parameters has none). The other files are not needed. If the model uses shared utility code, the app asks for that file.
+  The same in one MATLAB command (changes the model in memory only - do not save it):
+  set_param('{{model}}', 'SolverType','Fixed-step', 'Solver','ode8', 'SystemTargetFile','ert.tlc', 'GenCodeOnly','on', 'SupportContinuousTime','on', 'CodeInterfacePackaging','Nonreusable function'); slbuild('{{model}}')
+  Without Simulink's own test results the converted model is checked against the C code only, not against Simulink.
+context_model_fix: 'The user uploaded the Simulink model {{file}} (model name {{name}}). It cannot be converted
+  as it is - the model itself needs a change, which the user makes in Simulink: {{fix}} Tell the user exactly this
+  change, in plain words, and ask them to upload the changed model. Do NOT offer the C-code routes: they need the
+  same change.'
+context_diagram: 'Under your reply the app shows the block diagram of the model {{name}}, with all its blocks.
+  There the user can click the dot on each signal that is an input of the model (mode "input") or an output (mode
+  "output") - as many as they want - and press "Convert with these signals": the model is then converted at once,
+  without any change in Simulink. This is the easiest way: tell the user about it first, in plain words. An input
+  replaces the signal there (what it fed now reads u), an output is measured as y and is what the plots show. The
+  whole model is converted, also what reaches no output. Changing the model in Simulink and uploading it again is
+  the other way.'
+context_no_inputs: 'The model {{name}} ({{file}}) can be converted directly, but it lacks an input u or an output y.
+  Why: "{{reason}}" The app has NOT converted it yet: it waits until the user chooses on the diagram under your reply
+  which signals are the inputs and the outputs y (the outputs are what the plots show) and presses "Convert with these
+  signals" - or presses "Convert as it is". Tell the user this; do not mention the C-code routes.'
+no_inputs_note: 'The model {{name}} ({{file}}) can be converted directly, but it lacks an input u or an output y -
+  the reason: "{{reason}}". The app has not converted it yet. Your reply now: say this in plain words, in one or two
+  sentences; that right under your reply the app shows the block diagram of the model: they click the dot on each
+  signal that should be an input u - a round dot is a signal, a diamond is an input port nothing is connected to (it
+  reads 0 now), e.g. the input of a Transfer Fcn - then switch to "output" and click the signals to measure as
+  outputs y (these are what the plots show); then press "Convert with these signals". "Convert as it is" converts
+  the model unchanged. Do not mention the C-code routes.'
+context_signals: 'The user chose on the diagram - inputs: {{inputs}}; outputs: {{outputs}}.'
+context_missing_variables: 'The user uploaded the Simulink model {{file}} (model name {{name}}). The app can convert
+  it directly from the model file (method 1, no MATLAB) as soon as it knows the values of these MATLAB workspace
+  variables, which the block parameters use but which are not stored in the .slx file: {{variables}}. Details: {{details}}
+  Ask the user for exactly these values. They can type them in the chat as `name = value` (e.g. `m = 1200`, `A =
+  [0 1; -2 -3]`, `p.k = 4`) or simply in words ("the mass is 1200"), or attach the MATLAB script (.m) that defines
+  them (e.g. the init script they run before simulating). Values must be in the units of the model. When a message
+  contains them, the app converts the model again by itself - you do not convert anything. Never invent values.
+  Only if the user cannot give them, the C-code routes below are the alternative.'
+context_failed: 'The user uploaded the Simulink model {{file}} (model name {{name}}). The app first tried to convert
+  it directly from the model file (reading its XML, without MATLAB); that did not work: {{reason}} So the app needs
+  the C code generated from it (there is no MATLAB in this app).'
+context_failed_no_reason: the file could not be converted directly.
+fact_solver: solver {{solver}} ({{type}})
+fact_ports: '{{inports}} root Inport(s), {{outports}} root Outport(s)'
+fact_continuous: 'continuous blocks: {{blocks}}'
+facts: 'Read from the file: {{facts}}.'
+found_in_file: 'Found in the file (tell the user when it matters for the next step): {{note}}'
+code_received: 'Generated C code received so far ({{count}} files: {{files}}){{of_model}}.'
+code_received_of_model: ' for model {{model}}'
+code_missing: 'Still missing - name these files to the user and ask for them: {{files}}.'
+code_problem: 'Problem - explain it to the user: {{problem}}'
+code_complete: The C code is complete; the app is converting it.
+routes: |-
+  Two routes to the upload the app can convert:
+  (A) automatic, recommended - especially for users not at home with code generation. Steps:
+  {{export_steps}}
+  (B) generate the C code yourself, checked against the C code only. Steps:
+  {{manual_steps}}
+  Both routes need Simulink Coder and Embedded Coder. Without them the user can describe the model or paste its equations in the chat and you draft dynamics(t, x, u) from that (not validated against Simulink).
+just_uploaded_model_fix: 'In this message the user attached the Simulink model {{file}}. Your reply now: say you
+  received the model {{name}}; that it cannot be converted as it is, because the model itself needs this change:
+  "{{fix}}"; explain the change in plain words, step by step if it helps (which block, from which Simulink library,
+  where to put it); say that the name of the block does not matter; ask them to upload the changed model. Do not
+  mention the C-code routes - they need the same change.'
+just_uploaded_model_fix_diagram: 'In this message the user attached the Simulink model {{file}}. Your reply
+  now: say you received the model {{name}}; that it cannot be converted as it is, in plain words and at most two
+  sentences - the reason: "{{fix}}"; that the easiest way is right under your reply: the app shows the block diagram
+  of the model, where they click the dot on each signal that is an input (mode "input") or an output (mode
+  "output") of the model - as many as they want - and then press "Convert with these signals"; an input replaces
+  the signal there (what it fed now reads u), an output is measured as y; the other way is
+  to change the model in Simulink as the reason says and upload it again. Do not mention the C-code routes - they
+  need the same inputs and outputs.'
+just_uploaded_missing_variables: 'In this message the user attached the Simulink model {{file}}. Your reply now:
+  say you received the model {{name}}; that it can be converted directly from the model file (method 1) once the
+  values of these MATLAB workspace variables are known - its blocks use them, but their values are not stored in
+  the .slx file: {{variables}}; if the reason says why some have no value, say it in a few words (the reason: "{{details}}");
+  ask the user to send the values in the chat - as `name = value` (e.g. `m = 1200`, matrices as `[0 1; -2 -3]`)
+  or in their own words - or to attach the .m script that defines them, and say the model is then converted automatically.
+  Do not mention the C-code routes now.'
+just_uploaded_failed: 'In this message the user attached the Simulink model {{file}}. Your reply now: say you received
+  the model {{name}}; that the direct conversion from the model file did not work (method 1), and why, in plain
+  words and at most two sentences - the reason, exactly: "{{reason}}" (do not give any other reason); that therefore
+  the next way is the C code Simulink generates from it; mention what was found in the file if it matters; name
+  the two ways in one short sentence each - (A) a script that does everything for them in MATLAB (recommended if
+  they are not at home with code generation), (B) they generate the C code themselves - and ask which they prefer.
+  No numbered steps and no attachment yet, unless the message already says which way they want or that they are
+  not familiar with code generation.'
+just_uploaded_failed_no_reason: the model file could not be converted directly
+signals_failed: 'The user chose signals on the diagram of the model {{file}} - inputs: {{inputs}}; outputs:
+  {{outputs}} - and the app converted the model with them, but it did not work. The reason, exactly: "{{reason}}".
+  Your reply now: say this in plain words, in at most two sentences, and what to change in the choice (for
+  instance a different signal as output or input). The diagram is still
+  under your reply: they can choose again and press "Convert with these signals". If the reason is missing values
+  of MATLAB variables, ask for them instead, as for any model.'
+signals_failed_no_reason: unknown
+values_received_missing: 'In this message the user sent values of MATLAB variables ({{sources}}).{{taken}}{{asked}}
+  The app converted the model {{file}} again; values are still missing for: {{variables}} (details: "{{details}}").
+  Say which values were taken and ask briefly for the ones still missing, in the same way.'
+values_taken: ' The values taken: {{read}}.'
+values_unclear: ' Not clear in the message (ask about these): {{unclear}}.'
+values_received_failed: 'In this message the user sent values of MATLAB variables ({{sources}}). The app converted
+  the model {{file}} again; the variables are no longer the problem, but the direct conversion still did not work:
+  "{{reason}}" (do not give any other reason). Explain it in at most two sentences; the next way is the C code Simulink
+  generates from the model - name the two ways in one short sentence each and ask which they prefer.'
+values_received_failed_no_reason: unknown
+values_not_found: 'The model {{file}} still waits for the values of: {{variables}}. This message gave none that
+  could be taken{{unclear}}{{rejected}}. If the user meant to give values, say in a few words why it was not taken
+  (if a reason is given here) and ask again for exactly these - in their own words or as `m = 1200`, both work; never
+  say that one format is required. Otherwise answer the message.'
+values_not_found_unclear: ' (not clear: {{unclear}})'
+values_not_found_rejected: ' (read, but not taken: {{rejected}})'
+script_kept: In this message the user attached the MATLAB script(s) {{sources}}. The app keeps the variables they
+  define and uses them when it converts a Simulink model (.slx) uploaded in this chat. Say so in one sentence.

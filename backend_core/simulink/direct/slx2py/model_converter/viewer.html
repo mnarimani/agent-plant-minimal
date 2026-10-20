@@ -1,0 +1,61 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Model Explorer</title>
+<style>
+:root{color-scheme:light;--bg:#f4f7fb;--surface:#fff;--text:#15243a;--muted:#64748b;--border:#dde5ef;--accent:#3564d9;--grid:#dae3ef;--wire:#63758d;--input:#168775;--state:#7954c5;--output:#be7714;--compute:#326bd0}
+@media(prefers-color-scheme:dark){:root:not([data-theme=light]){color-scheme:dark;--bg:#111925;--surface:#1b2737;--text:#e4edf8;--muted:#a0b2c9;--border:#334258;--accent:#8aaeff;--grid:#29394c;--wire:#b1c3dc;--input:#65c9b4;--state:#ba9bf4;--output:#efbb70;--compute:#8db7ff}}
+:root[data-theme=dark]{color-scheme:dark;--bg:#111925;--surface:#1b2737;--text:#e4edf8;--muted:#a0b2c9;--border:#334258;--accent:#8aaeff;--grid:#29394c;--wire:#b1c3dc;--input:#65c9b4;--state:#ba9bf4;--output:#efbb70;--compute:#8db7ff}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--text);font:13px system-ui,Arial,sans-serif}
+header{padding:18px 22px 14px;display:flex;align-items:center;gap:14px;background:var(--surface);border-bottom:1px solid var(--border)}
+h1{margin:0;font-size:21px;letter-spacing:-.5px}header p{margin:5px 0 0;color:var(--muted);font-size:12px}.badge{margin-left:auto;color:var(--muted);font-size:12px}
+button,select,input{font:inherit;color:var(--text);background:var(--surface);border:1px solid var(--border);border-radius:7px;min-height:32px;padding:6px 10px}
+button{cursor:pointer}button:hover,select:focus,input:focus{border-color:var(--accent)}button[aria-pressed=true]{background:var(--accent);color:var(--surface);border-color:var(--accent)}
+nav{display:flex;gap:6px;flex-wrap:wrap;padding:12px 22px}nav button{font-size:12px}button:focus-visible,.node:focus-visible{outline:2px solid var(--accent);outline-offset:3px}
+main{display:grid;grid-template-columns:minmax(0,1fr) 315px;gap:14px;padding:0 22px 20px}
+main.details-only{grid-template-columns:1fr}main.details-only aside{max-height:none;min-height:300px}.canvas[hidden]{display:none}
+.canvas,aside{background:var(--surface);border:1px solid var(--border);border-radius:12px;overflow:hidden}
+.toolbar{padding:10px 12px;display:flex;flex-wrap:wrap;align-items:center;gap:6px;border-bottom:1px solid var(--border)}
+#system{max-width:230px;min-width:150px;text-overflow:ellipsis}
+.search{position:relative;margin-left:auto}.search input{width:142px}.matches{position:absolute;top:38px;right:0;z-index:20;width:250px;max-height:240px;overflow:auto;background:var(--surface);border:1px solid var(--border);box-shadow:0 10px 25px #0002;border-radius:8px}
+.matches button{display:block;width:100%;border:0;text-align:left;border-radius:0}
+.viewport{height:540px;width:100%;overflow:hidden;position:relative;touch-action:none;background:var(--surface);cursor:grab}.viewport:active{cursor:grabbing}
+#graph{width:100%;height:100%;display:block;user-select:none}.wire{fill:none;stroke:var(--wire);stroke-width:1.7;stroke-linecap:round;stroke-linejoin:round}.wire.control{stroke-dasharray:6 5}.wire.related{stroke:var(--accent);stroke-width:2.7}.wire.dimmed{opacity:.2}
+.node{cursor:pointer}.node .body{fill:var(--surface);stroke:var(--compute);stroke-width:1.7}.node[data-kind=input] .body{stroke:var(--input)}.node[data-kind=state] .body{stroke:var(--state)}.node[data-kind=output] .body{stroke:var(--output)}
+.node.selected .body{stroke:var(--accent);stroke-width:3;filter:drop-shadow(0 0 5px #487de433)}.node.dimmed{opacity:.3}.node-label{fill:var(--text);font-size:12px;font-weight:500}
+.symbol{fill:var(--text);font-size:16px;font-family:Georgia,serif;text-anchor:middle}.symbol-line{fill:none;stroke:var(--text);stroke-width:1.4}.port{fill:var(--surface);stroke:var(--wire);stroke-width:1.2}.junction{fill:var(--wire)}
+.legend{display:flex;flex-wrap:wrap;align-items:center;gap:14px;padding:10px 14px;border-top:1px solid var(--border);color:var(--muted);font-size:11px}.legend span::before{content:"";display:inline-block;width:7px;height:7px;border-radius:50%;margin-right:5px;background:var(--compute)}.legend .input::before{background:var(--input)}.legend .state::before{background:var(--state)}.legend .output::before{background:var(--output)}#zoom-level{margin-left:auto}
+aside{padding:18px;max-height:640px;overflow:auto}aside h2{font-size:16px;margin:0 0 14px}aside h3{font-size:12px;text-transform:uppercase;letter-spacing:.6px;color:var(--muted);margin-top:22px}
+.hint{color:var(--muted);line-height:1.7}.pill{display:inline-block;color:var(--accent);background:var(--bg);padding:4px 8px;border-radius:6px;font-size:11px}
+dt{font-size:11px;color:var(--muted);margin-top:14px}dd{margin:5px 0 0;overflow-wrap:anywhere;line-height:1.5}dl{margin:0}pre{padding:12px;border-radius:8px;background:var(--bg);white-space:pre-wrap;overflow-wrap:anywhere;line-height:1.65;font:12px ui-monospace,Consolas,monospace}
+.error{color:#c84d47}.mapping{display:grid;grid-template-columns:36px 1fr;gap:8px;margin:10px 0;font-size:12px}
+.overlay{position:fixed;inset:0;background:#0a1420b0;z-index:30;display:grid;place-items:center;padding:24px}.overlay[hidden]{display:none}.preview{background:var(--surface);padding:20px;border-radius:14px;max-width:740px;width:100%}.preview header{padding:0 0 14px}.preview img{display:block;max-width:100%;max-height:550px;margin:auto;background:white}.preview p{font-size:12px;color:var(--muted)}
+.focus main{grid-template-columns:1fr}.focus aside{display:none}.focus .viewport{height:630px}#source-preview:disabled{display:none}
+@media(max-width:950px){main{grid-template-columns:1fr}aside{max-height:350px}.viewport{height:480px}.badge{display:none}}
+</style>
+</head>
+<body>
+<header><div><h1 id="model-name"></h1><p>Model Explorer · Blocks, connections and dynamic equations</p></div><span class="badge" id="graph-summary"></span></header>
+<nav aria-label="Explorer sections">
+<button data-panel="diagram">Diagram</button><button data-panel="inputs" aria-pressed="true">Inputs</button><button data-panel="outputs">Outputs</button><button data-panel="dynamics">Dynamic model</button><button data-panel="parameters">Parameters</button><button data-panel="simulation">Simulation settings</button>
+</nav>
+<main class="details-only">
+<section class="canvas" aria-label="Model diagram" hidden>
+<div class="toolbar">
+<select id="system" aria-label="Subsystem"></select>
+<select id="layout" aria-label="Diagram layout"></select>
+<button id="fit">Fit</button><button id="zoom-in" aria-label="Zoom in">+</button><button id="zoom-out" aria-label="Zoom out">−</button><button id="focus" aria-pressed="false">Focus</button>
+<button id="save-svg">Save SVG</button><button id="source-preview">SLX preview</button>
+<div class="search"><input id="search" type="search" placeholder="Find a block…" aria-label="Find a block"><div id="matches" class="matches" hidden></div></div>
+</div>
+<div class="viewport" id="viewport"><svg id="graph" xmlns="http://www.w3.org/2000/svg" role="group" aria-label="Interactive blocks and signal connections"></svg></div>
+<div class="legend"><span class="input">Input</span><span>Computation</span><span class="state">State</span><span class="output">Output</span><output id="zoom-level"></output></div>
+</section>
+<aside id="inspector" aria-live="polite"></aside>
+</main>
+<div class="overlay" id="preview-overlay" hidden><div class="preview" role="dialog" aria-modal="true" aria-labelledby="preview-title"><header><h1 id="preview-title">Original SLX preview</h1><button id="close-preview" style="margin-left:auto">Close</button></header><img id="thumbnail" alt="Thumbnail saved inside the original Simulink file"><p>This is the thumbnail saved in the SLX. It may include scopes or other blocks omitted from the converted computational model.</p></div></div>
+<script id="model-data" type="application/json">__MODEL_GRAPH__</script>
+<script>__VIEWER_SCRIPT__</script>
+</body>
+</html>

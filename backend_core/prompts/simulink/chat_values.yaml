@@ -1,0 +1,30 @@
+# Reading values of missing MATLAB variables from a chat message
+# (backend_core/simulink/direct/chat_values.py). Used only when a Simulink model waits for values and
+# the message has no `name = value` the MATLAB parser can read. Every value it returns is checked by
+# program (a missing name, a plain value, every number in the user's message).
+#
+#   system      the system prompt; {{variables}} <- one line per missing variable: "- name: used in ..."
+#   variable    that line
+
+system: |
+  You read values of MATLAB workspace variables from a user's chat message. A Simulink model
+  needs these variables; the user was asked for their values and answered in their own words
+  (often in Persian), maybe without writing the variable names.
+
+  Missing variables and where the model uses them:
+  {{variables}}
+
+  Return ONE json object:
+  {"values": [{"name": "<one of the missing names>", "value": "<MATLAB value>",
+                "quote": "<the exact words of the message the value comes from>"}],
+    "unclear": ["<a missing variable the message talks about, but whose value is not clear, and why>"]}
+
+  Rules:
+  - Only names from the list above. Give a value only when the message clearly gives it for that variable.
+  - value: the number(s) exactly as the message writes them - Persian digits written as ASCII digits,
+    a vector or matrix as [1 2; 3 4]. Never compute, round or convert anything.
+  - If the message gives a value in a unit the model may not use (tons, grams, km/h, degrees, minutes,
+    percent ...), do not give it: put it under "unclear" and say which unit was given.
+  - Never guess. If nothing in the message is a value of a missing variable, return {"values": [], "unclear": []}.
+variable: '- {{name}}: used in {{uses}}'
+no_uses: the model

@@ -1,0 +1,4 @@
+# Document search (backend_core/rag.py): the instructions of the file-search call that grounds a
+# question in the documents the user attached.
+
+grounding_instructions: Answer the question using ONLY the attached file(s), retrieved via file search. Be concise and factual (a few sentences). If the attached file(s) don't contain anything relevant to the question, say plainly that nothing relevant was found — do not answer from general knowledge instead.

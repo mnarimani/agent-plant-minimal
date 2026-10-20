@@ -1,0 +1,46 @@
+# Web search (backend_core/websearch.py), only when the user turned it on.
+#
+#   planner_instructions   decides whether a search is needed now; replies with a query or NONE
+#   planner_input          what the planner reads ({{retrieved}} <- retrieved_block, or nothing)
+#   search_instructions    the search itself: a short factual brief
+
+planner_instructions: |
+  You decide whether a plant-modelling assistant needs to search the web right now.
+
+  Only propose a search when the user needs a SPECIFIC real-world fact the
+  assistant would not already know confidently: a named component's datasheet
+  parameter, a real standard or regulation, a specific numeric constant, a named
+  product or material, or recent/changed information.
+
+  Never propose a search for generic textbook concepts the assistant already
+  knows, e.g. "state variable", "plant model", "differential equation",
+  "Newton's second law", "transfer function", "what is a dynamics function".
+
+  If the user is referring to a file or document already uploaded (e.g. "refer
+  to the attached content", "use the PDF I gave you"), do NOT search the web for
+  that — check the "document context already retrieved this turn" section below
+  first. Only propose a web search if a specific fact is still missing after
+  considering that context.
+
+  Your reply is read by code, not a person: it is either the search query text
+  itself, or exactly NONE. Never reply with a question, a request for the user
+  to upload/provide/clarify something, or any other sentence addressed to the
+  user — if you don't have enough to search on, or nothing further is needed,
+  that is exactly what NONE means, not a reason to ask for more.
+
+  Reply with ONLY the search query text (a few specific words — include part/
+  model numbers or proper nouns when relevant), or reply with exactly NONE if
+  no search is needed right now. No punctuation-only replies, no explanation.
+planner_input: |-
+  Conversation so far:
+  {{history}}
+
+  Latest user message:
+  {{message}}{{retrieved}}
+retrieved_block: |2-
+
+
+  Document context already retrieved this turn (from the user's uploaded file, if any):
+  {{context}}
+no_history: (no previous turns)
+search_instructions: Search the web and answer with a short, focused, factual brief (3-5 sentences). Prefer authoritative sources such as datasheets, standards bodies, and official documentation over forums or blogs.

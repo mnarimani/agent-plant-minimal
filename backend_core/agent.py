@@ -22,16 +22,14 @@ that has to produce reliable JSON free of tool-call side effects.
 
 from __future__ import annotations
 
-import re
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Tuple
 
-import yaml
 
-from . import openai_client
+from . import openai_client, prompts
 from .json_extract import extract_json
 
-PROMPTS_DIR = Path(__file__).parent / "prompts"
+PROMPTS_DIR = prompts.PROMPTS_DIR
 
 REQUIRED_CODE_KEYS = ("system_name", "python_code")
 REQUIRED_METADATA_KEYS = (
@@ -49,26 +47,9 @@ DEFAULT_MAX_DRAFTS = 5
 DEFAULT_MIN_USER_TURNS_BEFORE_COMPLETION = 2
 DEFAULT_METADATA_MAX_RETRIES = 1
 
-_REPAIR_NOTE = (
-    "\n\nInternal note: your previous reply was not a single valid JSON object "
-    "in one of the three allowed shapes. Reply again with ONLY one JSON object — "
-    'status "draft" if the plant is already known from the history, otherwise '
-    '"continue".'
-)
-
-_FORCE_DRAFT_NOTE = (
-    '\n\nInternal note: do not emit status "complete" yet — the conversation is '
-    'not finished. If the plant is already known, emit status "draft" with real '
-    "python_code and ask what to change or whether to finish. Otherwise emit "
-    'status "continue" with one concrete question. Output ONLY JSON.'
-)
-
-_FINISH_RE = re.compile(
-    r"\b(finish|done|confirm(?:\s+system)?|accept(?:\s+draft)?|ship\s*it|"
-    r"looks?\s+good|totally\s+good|finalize|finalise|good\s+to\s+go|"
-    r"that'?s\s+(fine|good|ok|okay)|perfect|approved)\b",
-    re.IGNORECASE,
-)
+# the notes added to the system prompt: backend_core/prompts/chat/agent_notes.yaml
+_REPAIR_NOTE = prompts.text("chat/agent_notes", "repair_note")
+_FORCE_DRAFT_NOTE = prompts.text("chat/agent_notes", "force_draft_note")
 
 _FORBIDDEN_ASSUMPTION_SNIPPETS = (
     "metadata inferred from",
@@ -113,10 +94,8 @@ def _clean_assumptions(assumptions: Any) -> List[str]:
 
 
 def _load_prompt(name: str) -> Dict[str, str]:
-    path = PROMPTS_DIR / f"{name}.yaml"
-    with path.open("r", encoding="utf-8") as f:
-        data = yaml.safe_load(f)
-    return data
+    """a prompt file of the chat agent: backend_core/prompts/chat/<name>.yaml"""
+    return prompts.load("chat/" + name)
 
 
 class PlantModelAgent:
@@ -160,6 +139,9 @@ class PlantModelAgent:
         self.last_status: Optional[str] = None
         self.last_metadata_generated: bool = False
         self.latest_code: Optional[str] = None
+        # Files the model asked to show under its reply ("attach", e.g. c2py_export.m);
+        # the app decides which names it actually serves.
+        self.last_attachments: List[str] = []
 
     def reset(self) -> None:
         self.draft_count = 0
@@ -177,13 +159,15 @@ class PlantModelAgent:
         return "\n".join(lines)
 
     def _render_user_prompt(
-        self, history_text: str, user_message: str, retrieved_context: str, web_context: str
+        self, history_text: str, user_message: str, retrieved_context: str, web_context: str,
+        upload_context: str = "",
     ) -> str:
         return (
             self._user_template.replace("{{conversation_history}}", history_text or "(no previous turns)")
             .replace("{{user_message}}", user_message)
             .replace("{{retrieved_context}}", retrieved_context.strip() or "(none)")
             .replace("{{web_context}}", web_context.strip() or "(none)")
+            .replace("{{upload_context}}", upload_context.strip() or "(none)")
         )
 
     def _call_primary(self, user_prompt: str, system_suffix: str = "") -> str:
@@ -205,22 +189,26 @@ class PlantModelAgent:
         user_message: str,
         retrieved_context: str = "",
         web_context: str = "",
+        upload_context: str = "",
     ) -> Tuple[str, Optional[Dict[str, Any]]]:
         """Run one conversational turn.
 
         Returns ``(display_text, final_payload)``. ``final_payload`` is
         non-None only on the turn a model becomes final (status complete,
-        or the draft cap is hit).
+        or the draft cap is hit). ``upload_context`` is the state of a
+        Simulink conversion that waits for files (``simulink.intake.agent_context``).
         """
         self.last_status = None
         self.last_metadata_generated = False
         self.latest_code = None
+        self.last_attachments = []
 
         history_messages = list(history_messages)
         history_text = self.format_history(history_messages)
-        user_prompt = self._render_user_prompt(history_text, user_message, retrieved_context, web_context)
+        user_prompt = self._render_user_prompt(
+            history_text, user_message, retrieved_context, web_context, upload_context
+        )
         user_turns = sum(1 for m in history_messages if m.get("role") == "user") + 1
-        user_accepts = bool(_FINISH_RE.search(user_message))
 
         raw = self._call_primary(user_prompt)
         parsed = extract_json(raw)
@@ -232,17 +220,15 @@ class PlantModelAgent:
                 self.last_status = "unparsed"
                 return raw.strip() or "(empty model response)", None
 
-        # If the user clearly accepted and we already have a draft on file,
-        # promote it even if this turn's status wasn't literally "complete".
-        if user_accepts and self.latest_draft is not None and parsed.get("status") != "complete":
-            if parsed.get("status") == "complete" and self._has_code(parsed):
-                return self._accept_complete(parsed)
-            return self._accept_complete(self.latest_draft)
-
+        # Whether the user accepted the draft is the model's call, expressed as
+        # status "complete" — there is deliberately no keyword matching on the
+        # user's message here. Keywords can't tell "done" from "I'm not done
+        # yet, change the mass", and only work in English.
         status = parsed.get("status")
+        self.last_attachments = self._attachments(parsed)
 
         if status == "continue":
-            reply = _to_ascii((parsed.get("reply") or "").strip())
+            reply = (parsed.get("reply") or "").strip()
             self.last_status = "continue"
             if reply:
                 return reply, None
@@ -253,6 +239,7 @@ class PlantModelAgent:
             if parsed is None:
                 return raw.strip() or "(empty model response)", None
             status = parsed.get("status")
+            self.last_attachments = self._attachments(parsed)
             if status == "continue":
                 return (parsed.get("reply") or raw).strip(), None
             # else fall through to draft/complete handling below
@@ -260,8 +247,12 @@ class PlantModelAgent:
         if status == "draft" and self._has_code(parsed):
             return self._accept_draft(parsed)
 
+        if status == "complete" and not self._has_code(parsed) and self.latest_draft is not None:
+            # Acceptance without re-sent code: finalise the draft the user saw.
+            return self._accept_complete(self.latest_draft)
+
         if status == "complete" and self._has_code(parsed):
-            allowed = user_accepts or self.latest_draft is not None or user_turns >= self.min_user_turns_before_completion
+            allowed = self.latest_draft is not None or user_turns >= self.min_user_turns_before_completion
             if allowed:
                 return self._accept_complete(parsed)
             # Too early — ask the model to draft/continue instead of finalising.
@@ -381,13 +372,21 @@ class PlantModelAgent:
     # -- small helpers ------------------------------------------------------
 
     @staticmethod
+    def _attachments(data: Dict[str, Any]) -> List[str]:
+        names = data.get("attach")
+        if isinstance(names, str):
+            names = [names]
+        return [n.strip() for n in names if isinstance(n, str) and n.strip()] if isinstance(names, list) else []
+
+    @staticmethod
     def _has_code(data: Dict[str, Any]) -> bool:
         return all(isinstance(data.get(k), str) and data[k].strip() for k in REQUIRED_CODE_KEYS)
 
     @staticmethod
     def _sanitize(data: Dict[str, Any]) -> Dict[str, Any]:
         out = dict(data)
-        for key in ("system_name", "python_code", "reply"):
+        # Only the code must be ASCII; the reply is in the user's language.
+        for key in ("system_name", "python_code"):
             if isinstance(out.get(key), str):
                 out[key] = _to_ascii(out[key])
         out.pop("metadata", None)  # the primary agent must never carry metadata

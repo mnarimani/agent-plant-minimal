@@ -1,7 +1,8 @@
 """Thin, logged wrapper around the OpenAI Responses API.
 
 Everything in this app — the primary agent, the metadata extractor, RAG
-grounding, and web search — goes through :func:`responses_call` so every
+grounding, web search, and the Simulink conversion agent
+(``backend_core.simulink``) — goes through :func:`responses_call` so every
 call is uniformly logged (see ``logging_utils``) and uniformly resilient
 to the handful of ways different models reject parameters (e.g. some
 reasoning models reject ``temperature``).
@@ -9,8 +10,9 @@ reasoning models reject ``temperature``).
 
 from __future__ import annotations
 
+import json
 import os
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Union
 
 from dotenv import load_dotenv
 from openai import OpenAI
@@ -53,16 +55,22 @@ def responses_call(
     kind: str,
     model: Optional[str] = None,
     instructions: Optional[str] = None,
-    input_text: str,
+    input_text: Union[str, List[Dict[str, str]]],
     tools: Optional[List[Dict[str, Any]]] = None,
     include: Optional[List[str]] = None,
     temperature: Optional[float] = None,
+    text_format: Optional[Dict[str, Any]] = None,
 ):
     """Call ``client.responses.create`` and log the interaction.
 
     Falls back to omitting ``temperature`` if the model rejects it (some
     reasoning models only accept the default). Returns the raw SDK
     response object; callers read ``.output_text`` / ``.output`` off it.
+
+    ``input_text`` is either one user message or a list of
+    ``{"role", "content"}`` messages (a multi-turn exchange, e.g. a draft
+    sent back with the reason it was rejected). ``text_format`` is passed as
+    ``text={"format": ...}``, e.g. ``{"type": "json_object"}`` for JSON mode.
     """
     model = model or DEFAULT_MODEL
     kwargs: Dict[str, Any] = {"model": model, "input": input_text}
@@ -74,6 +82,9 @@ def responses_call(
         kwargs["include"] = include
     if temperature is not None:
         kwargs["temperature"] = temperature
+    if text_format is not None:
+        kwargs["text"] = {"format": text_format}
+    logged_input = input_text if isinstance(input_text, str) else json.dumps(input_text, ensure_ascii=False)
 
     try:
         resp = client.responses.create(**kwargs)
@@ -85,7 +96,7 @@ def responses_call(
             logging_utils.log_interaction(
                 kind=f"{kind}_error",
                 system_prompt=instructions or "",
-                user_prompt=input_text,
+                user_prompt=logged_input,
                 response_text=f"ERROR: {exc}",
                 model=model,
                 extra={"tools": tools or []},
@@ -96,7 +107,7 @@ def responses_call(
     logging_utils.log_interaction(
         kind=kind,
         system_prompt=instructions or "",
-        user_prompt=input_text,
+        user_prompt=logged_input,
         response_text=text,
         model=model,
         extra={"tools": tools or []},
